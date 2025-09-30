@@ -28,6 +28,14 @@ import (
 // =============================================================================
 // Event Handlers (handle user input/events)
 // =============================================================================
+const (
+	ForwardTypeLocal   = "Local"
+	ForwardTypeRemote  = "Remote"
+	ForwardTypeDynamic = "Dynamic"
+
+	ForwardModeOnlyForward = "Only forward"
+	ForwardModeForwardSSH  = "Forward + SSH"
+)
 
 func (t *tui) handleGlobalKeys(event *tcell.EventKey) *tcell.EventKey {
 	// Don't handle global keys when search has focus
@@ -384,8 +392,8 @@ func (t *tui) handlePortForward() {
 }
 
 func (t *tui) showPortForwardForm(server domain.Server) {
-	typeChoices := []string{"Local", "Remote", "Dynamic"}
-	modeChoices := []string{"Only forward", "Forward + SSH"}
+	typeChoices := []string{ForwardTypeLocal, ForwardTypeRemote, ForwardTypeDynamic}
+	modeChoices := []string{ForwardModeOnlyForward, ForwardModeForwardSSH}
 
 	currentTypeIdx := 0
 	currentModeIdx := 0
@@ -408,7 +416,7 @@ func (t *tui) showPortForwardForm(server domain.Server) {
 	dd.SetOptions(typeChoices, func(text string, index int) {
 		currentTypeIdx = index
 		// Toggle fields when switching type
-		isDynamic := typeChoices[currentTypeIdx] == "Dynamic"
+		isDynamic := typeChoices[currentTypeIdx] == ForwardTypeDynamic
 		if isDynamic {
 			hostField.SetText("").SetDisabled(true)
 			hostPortField.SetText("").SetDisabled(true)
@@ -436,7 +444,7 @@ func (t *tui) showPortForwardForm(server domain.Server) {
 	mode.SetCurrentOption(currentModeIdx)
 	form.AddFormItem(mode.SetLabel("Mode"))
 
-	isDynamic := typeChoices[currentTypeIdx] == "Dynamic"
+	isDynamic := typeChoices[currentTypeIdx] == ForwardTypeDynamic
 	if isDynamic {
 		hostField.SetText("").SetDisabled(true)
 		hostPortField.SetText("").SetDisabled(true)
@@ -456,7 +464,7 @@ func (t *tui) showPortForwardForm(server domain.Server) {
 
 		ft := typeChoices[currentTypeIdx]
 		var args []string
-		if ft == "Dynamic" {
+		if ft == ForwardTypeDynamic {
 			spec := portVal
 			if bindAddrVal != "" {
 				spec = bindAddrVal + ":" + portVal
@@ -475,14 +483,14 @@ func (t *tui) showPortForwardForm(server domain.Server) {
 			if bindAddrVal != "" {
 				spec = bindAddrVal + ":" + spec
 			}
-			if ft == "Local" {
+			if ft == ForwardTypeLocal {
 				args = append(args, "-L", spec)
 			} else {
 				args = append(args, "-R", spec)
 			}
 		}
 
-		onlyForward := modeChoices[currentModeIdx] == "Only forward"
+		onlyForward := modeChoices[currentModeIdx] == ForwardModeOnlyForward
 		alias := server.Alias
 		if onlyForward {
 			t.returnToMain()
