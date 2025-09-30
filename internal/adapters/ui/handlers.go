@@ -399,18 +399,48 @@ func (t *tui) showPortForwardForm(server domain.Server) {
 		SetTitle(fmt.Sprintf(" Port Forwarding: %s ", server.Alias)).
 		SetTitleAlign(tview.AlignCenter)
 
-	dd := tview.NewDropDown().SetOptions(typeChoices, func(text string, index int) { currentTypeIdx = index })
+	dd := tview.NewDropDown()
+	hostField := tview.NewInputField()
+	hostPortField := tview.NewInputField()
+	portField := tview.NewInputField()
+	bindAddrField := tview.NewInputField()
+
+	dd.SetOptions(typeChoices, func(text string, index int) {
+		currentTypeIdx = index
+		// Toggle fields when switching type
+		isDynamic := typeChoices[currentTypeIdx] == "Dynamic"
+		if isDynamic {
+			hostField.SetText("").SetDisabled(true)
+			hostPortField.SetText("").SetDisabled(true)
+		} else {
+			hostField.SetDisabled(false)
+			hostPortField.SetDisabled(false)
+		}
+	})
 	dd.SetCurrentOption(currentTypeIdx)
 	form.AddFormItem(dd.SetLabel("Type"))
 
-	form.AddInputField("Port", portVal, 8, nil, func(text string) { portVal = strings.TrimSpace(text) })
-	form.AddInputField("Host", hostVal, 40, nil, func(text string) { hostVal = strings.TrimSpace(text) })
-	form.AddInputField("Host Port", hostPortVal, 8, nil, func(text string) { hostPortVal = strings.TrimSpace(text) })
-	form.AddInputField("Bind Address (optional)", bindAddrVal, 40, nil, func(text string) { bindAddrVal = strings.TrimSpace(text) })
+	portField.SetLabel("Port").SetText(portVal).SetFieldWidth(8).SetChangedFunc(func(text string) { portVal = strings.TrimSpace(text) })
+	form.AddFormItem(portField)
+
+	hostField.SetLabel("Host").SetText(hostVal).SetFieldWidth(40).SetChangedFunc(func(text string) { hostVal = strings.TrimSpace(text) })
+	form.AddFormItem(hostField)
+
+	hostPortField.SetLabel("Host Port").SetText(hostPortVal).SetFieldWidth(8).SetChangedFunc(func(text string) { hostPortVal = strings.TrimSpace(text) })
+	form.AddFormItem(hostPortField)
+
+	bindAddrField.SetLabel("Bind Address (optional)").SetText(bindAddrVal).SetFieldWidth(40).SetChangedFunc(func(text string) { bindAddrVal = strings.TrimSpace(text) })
+	form.AddFormItem(bindAddrField)
 
 	mode := tview.NewDropDown().SetOptions(modeChoices, func(text string, index int) { currentModeIdx = index })
 	mode.SetCurrentOption(currentModeIdx)
 	form.AddFormItem(mode.SetLabel("Mode"))
+
+	isDynamic := typeChoices[currentTypeIdx] == "Dynamic"
+	if isDynamic {
+		hostField.SetText("").SetDisabled(true)
+		hostPortField.SetText("").SetDisabled(true)
+	}
 
 	form.AddButton("Start", func() {
 		if err := validatePort(portVal); err != nil {
