@@ -40,7 +40,7 @@ func (t *tui) handleGlobalKeys(event *tcell.EventKey) *tcell.EventKey {
 		t.handleQuit()
 		return nil
 	case '/':
-		t.handleSearchToggle()
+		t.handleSearchFocus()
 		return nil
 	case 'a':
 		t.handleServerAdd()
@@ -71,6 +71,12 @@ func (t *tui) handleGlobalKeys(event *tcell.EventKey) *tcell.EventKey {
 		return nil
 	case 't':
 		t.handleTagsEdit()
+		return nil
+	case 'f':
+		t.handlePortForward()
+		return nil
+	case 'x':
+		t.handleStopForwarding()
 		return nil
 	case 'j':
 		t.handleNavigateDown()
@@ -163,8 +169,10 @@ func (t *tui) handleSearchInput(query string) {
 	}
 }
 
-func (t *tui) handleSearchToggle() {
-	t.showSearchBar()
+func (t *tui) handleSearchFocus() {
+	if t.app != nil && t.searchBar != nil {
+		t.app.SetFocus(t.searchBar)
+	}
 }
 
 func (t *tui) handleServerConnect() {
@@ -265,7 +273,7 @@ func (t *tui) handleModalClose() {
 func (t *tui) handleRefreshBackground() {
 	currentIdx := t.serverList.GetCurrentItem()
 	query := ""
-	if t.searchVisible {
+	if t.searchBar != nil {
 		query = t.searchBar.InputField.GetText()
 	}
 
@@ -297,14 +305,6 @@ func (t *tui) handleRefreshBackground() {
 // =============================================================================
 // UI Display Functions (show UI elements/modals)
 // =============================================================================
-
-func (t *tui) showSearchBar() {
-	t.left.Clear()
-	t.left.AddItem(t.searchBar, 3, 0, true)
-	t.left.AddItem(t.serverList, 0, 1, false)
-	t.app.SetFocus(t.searchBar)
-	t.searchVisible = true
-}
 
 func (t *tui) showDeleteConfirmModal(server domain.Server) {
 	msg := fmt.Sprintf("Delete server %s (%s@%s:%d)?\n\nThis action cannot be undone.",
@@ -373,6 +373,113 @@ func (t *tui) showEditTagsForm(server domain.Server) {
 	form.SetCancelFunc(func() { t.returnToMain() })
 
 	t.app.SetRoot(form, true)
+	toFocus := form
+	t.app.SetFocus(toFocus)
+}
+
+func (t *tui) handlePortForward() {
+	if server, ok := t.serverList.GetSelectedServer(); ok {
+		t.showPortForwardForm(server)
+	}
+}
+
+func (t *tui) showPortForwardForm(server domain.Server) {
+	typeChoices := []string{"Local", "Remote", "Dynamic"}
+	modeChoices := []string{"Only forward", "Forward + SSH"}
+
+	currentTypeIdx := 0
+	currentModeIdx := 0
+	portVal := ""
+	hostVal := "localhost"
+	hostPortVal := ""
+	bindAddrVal := ""
+
+	form := tview.NewForm()
+	form.SetBorder(true).
+		SetTitle(fmt.Sprintf(" Port Forwarding: %s ", server.Alias)).
+		SetTitleAlign(tview.AlignCenter)
+
+	dd := tview.NewDropDown().SetOptions(typeChoices, func(text string, index int) { currentTypeIdx = index })
+	dd.SetCurrentOption(currentTypeIdx)
+	form.AddFormItem(dd.SetLabel("Type"))
+
+	form.AddInputField("Port", portVal, 8, nil, func(text string) { portVal = strings.TrimSpace(text) })
+	form.AddInputField("Host", hostVal, 40, nil, func(text string) { hostVal = strings.TrimSpace(text) })
+	form.AddInputField("Host Port", hostPortVal, 8, nil, func(text string) { hostPortVal = strings.TrimSpace(text) })
+	form.AddInputField("Bind Address (optional)", bindAddrVal, 40, nil, func(text string) { bindAddrVal = strings.TrimSpace(text) })
+
+	mode := tview.NewDropDown().SetOptions(modeChoices, func(text string, index int) { currentModeIdx = index })
+	mode.SetCurrentOption(currentModeIdx)
+	form.AddFormItem(mode.SetLabel("Mode"))
+
+	form.AddButton("Start", func() {
+		if err := validatePort(portVal); err != nil {
+			t.showStatusTempColor("Invalid port: "+err.Error(), "#FF6B6B")
+			return
+		}
+		if bindAddrVal != "" {
+			if err := validateBindAddress(bindAddrVal); err != nil {
+				t.showStatusTempColor("Invalid bind address: "+err.Error(), "#FF6B6B")
+				return
+			}
+		}
+
+		ft := typeChoices[currentTypeIdx]
+		var args []string
+		if ft == "Dynamic" {
+			spec := portVal
+			if bindAddrVal != "" {
+				spec = bindAddrVal + ":" + portVal
+			}
+			args = append(args, "-D", spec)
+		} else {
+			if err := validateHost(hostVal); err != nil {
+				t.showStatusTempColor("Invalid host: "+err.Error(), "#FF6B6B")
+				return
+			}
+			if err := validatePort(hostPortVal); err != nil {
+				t.showStatusTempColor("Invalid host port: "+err.Error(), "#FF6B6B")
+				return
+			}
+			spec := portVal + ":" + hostVal + ":" + hostPortVal
+			if bindAddrVal != "" {
+				spec = bindAddrVal + ":" + spec
+			}
+			if ft == "Local" {
+				args = append(args, "-L", spec)
+			} else {
+				args = append(args, "-R", spec)
+			}
+		}
+
+		onlyForward := modeChoices[currentModeIdx] == "Only forward"
+		alias := server.Alias
+		if onlyForward {
+			t.returnToMain()
+			t.showStatusTemp("Starting port forward…")
+			go func() {
+				pid, err := t.serverService.StartForward(alias, args)
+				t.app.QueueUpdateDraw(func() {
+					if err != nil {
+						t.showStatusTempColor("Forward failed: "+err.Error(), "#FF6B6B")
+					} else {
+						t.refreshServerList()
+						t.showStatusTemp(fmt.Sprintf("Port forwarding started (pid %d)", pid))
+					}
+				})
+			}()
+			return
+		}
+
+		t.app.Suspend(func() {
+			_ = t.serverService.SSHWithArgs(alias, args)
+		})
+		t.returnToMain()
+	})
+	form.AddButton("Cancel", func() { t.returnToMain() })
+	form.SetCancelFunc(func() { t.returnToMain() })
+
+	t.app.SetRoot(form, true)
 	t.app.SetFocus(form)
 }
 
@@ -380,12 +487,11 @@ func (t *tui) showEditTagsForm(server domain.Server) {
 // UI State Management (hide UI elements)
 // =============================================================================
 
-func (t *tui) hideSearchBar() {
-	t.left.Clear()
-	t.left.AddItem(t.hintBar, 1, 0, false)
-	t.left.AddItem(t.serverList, 0, 1, true)
-	t.app.SetFocus(t.serverList)
-	t.searchVisible = false
+// blurSearchBar moves focus back to the server list without changing layout.
+func (t *tui) blurSearchBar() {
+	if t.app != nil && t.serverList != nil {
+		t.app.SetFocus(t.serverList)
+	}
 }
 
 // =============================================================================
@@ -394,7 +500,7 @@ func (t *tui) hideSearchBar() {
 
 func (t *tui) refreshServerList() {
 	query := ""
-	if t.searchVisible {
+	if t.searchBar != nil {
 		query = t.searchBar.InputField.GetText()
 	}
 	filtered, _ := t.serverService.ListServers(query)
@@ -429,4 +535,22 @@ func (t *tui) showStatusTempColor(msg string, color string) {
 			})
 		}
 	})
+}
+
+// Stop any active port forwarding for the selected server.
+func (t *tui) handleStopForwarding() {
+	if server, ok := t.serverList.GetSelectedServer(); ok {
+		alias := server.Alias
+		go func() {
+			err := t.serverService.StopForwarding(alias)
+			t.app.QueueUpdateDraw(func() {
+				if err != nil {
+					t.showStatusTempColor("Failed to stop forwarding: "+err.Error(), "#FF6B6B")
+				} else {
+					t.showStatusTemp("Stopped forwarding for " + alias)
+				}
+				t.refreshServerList()
+			})
+		}()
+	}
 }

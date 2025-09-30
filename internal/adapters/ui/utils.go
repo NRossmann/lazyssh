@@ -25,6 +25,9 @@ import (
 	"github.com/mattn/go-runewidth"
 )
 
+// IsForwarding is an optional hook supplied by TUI to indicate active forwarding per alias.
+var IsForwarding func(alias string) bool
+
 // SSH config value constants
 const (
 	sshYes   = "yes"
@@ -80,8 +83,18 @@ func pinnedIcon(pinnedAt time.Time) string {
 
 func formatServerLine(s domain.Server) (primary, secondary string) {
 	icon := cellPad(pinnedIcon(s.PinnedAt), 2)
-	// Use a consistent color for alias; the icon reflects pinning
-	primary = fmt.Sprintf("%s [white::b]%-12s[-] [#AAAAAA]%-18s[-] [#888888]Last SSH: %s[-]  %s", icon, s.Alias, s.Host, humanizeDuration(s.LastSeen), renderTagBadgesForList(s.Tags))
+	// forwarding column after Host/IP
+	fGlyph := ""
+	isFwd := IsForwarding != nil && IsForwarding(s.Alias)
+	if isFwd {
+		fGlyph = "Ⓕ"
+	}
+	fCol := cellPad(fGlyph, 2)
+	if isFwd {
+		fCol = "[#A0FFA0]" + fCol + "[-]"
+	}
+	// Use a consistent color for alias; host/IP fixed width; then forwarding column
+	primary = fmt.Sprintf("%s [white::b]%-12s[-] [#AAAAAA]%-18s[-] %s [#888888]Last SSH: %s[-]  %s", icon, s.Alias, s.Host, fCol, humanizeDuration(s.LastSeen), renderTagBadgesForList(s.Tags))
 	secondary = ""
 	return
 }

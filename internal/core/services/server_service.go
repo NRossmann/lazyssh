@@ -24,6 +24,8 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
+	"syscall"
 	"time"
 
 	"github.com/Adembc/lazyssh/internal/core/domain"
@@ -34,6 +36,9 @@ import (
 type serverService struct {
 	serverRepository ports.ServerRepository
 	logger           *zap.SugaredLogger
+
+	fwMu     sync.Mutex
+	forwards map[string][]*os.Process
 }
 
 // NewServerService creates a new instance of serverService.
@@ -166,6 +171,141 @@ func (s *serverService) SSH(alias string) error {
 
 	s.logger.Infow("ssh end", "alias", alias)
 	return nil
+}
+
+// SSHWithArgs runs system ssh with provided extra args (e.g., -L/-R/-D) for the given alias.
+func (s *serverService) SSHWithArgs(alias string, extraArgs []string) error {
+	s.logger.Infow("ssh start (with args)", "alias", alias, "args", extraArgs)
+	args := append([]string{}, extraArgs...)
+	args = append(args, alias)
+	// #nosec G204
+	cmd := exec.Command("ssh", args...)
+	cmd.Stdin = os.Stdin
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	if err := cmd.Run(); err != nil {
+		s.logger.Errorw("ssh (with args) failed", "alias", alias, "error", err)
+		return err
+	}
+	if err := s.serverRepository.RecordSSH(alias); err != nil {
+		s.logger.Errorw("failed to record ssh metadata", "alias", alias, "error", err)
+	}
+	s.logger.Infow("ssh end (with args)", "alias", alias)
+	return nil
+}
+
+// StartForward starts ssh port forwarding in the background and tracks the process.
+func (s *serverService) StartForward(alias string, extraArgs []string) (int, error) {
+	s.fwMu.Lock()
+	if s.forwards == nil {
+		s.forwards = make(map[string][]*os.Process)
+	}
+	s.fwMu.Unlock()
+
+	extraArgs = append(extraArgs, "-N", alias)
+
+	// #nosec G204
+	cmd := exec.Command("ssh", extraArgs...)
+
+	// Detach from TTY: discard stdio
+	devNull, err := os.OpenFile(os.DevNull, os.O_RDWR, 0)
+	if err != nil {
+		return 0, fmt.Errorf("failed to open devnull: %w", err)
+	}
+	defer func() {
+		if devNull != nil {
+			_ = devNull.Close()
+		}
+	}()
+
+	cmd.Stdin = devNull
+	cmd.Stdout = devNull
+	cmd.Stderr = devNull
+	cmd.SysProcAttr = &syscall.SysProcAttr{
+		Setsid: true, // Create new session to fully detach
+	}
+
+	if err := cmd.Start(); err != nil {
+		return 0, fmt.Errorf("failed to start ssh: %w", err)
+	}
+
+	proc := cmd.Process
+	if proc == nil {
+		return 0, fmt.Errorf("process is nil after start")
+	}
+	pid := proc.Pid
+
+	// Track process
+	s.fwMu.Lock()
+	s.forwards[alias] = append(s.forwards[alias], proc)
+	s.fwMu.Unlock()
+
+	// Cleanup on exit
+	go func(a string, c *exec.Cmd, dn *os.File) {
+		_ = c.Wait()
+		_ = dn.Close()
+
+		s.fwMu.Lock()
+		defer s.fwMu.Unlock()
+
+		procs := s.forwards[a]
+		if len(procs) == 0 {
+			return
+		}
+
+		filtered := make([]*os.Process, 0, len(procs))
+		for _, p := range procs {
+			if p != nil && p.Pid != pid {
+				filtered = append(filtered, p)
+			}
+		}
+
+		if len(filtered) == 0 {
+			delete(s.forwards, a)
+		} else {
+			s.forwards[a] = filtered
+		}
+	}(alias, cmd, devNull)
+
+	devNull = nil // Prevent defer from closing it
+
+	return pid, nil
+}
+
+// StopForwarding kills all active forward processes for the alias.
+func (s *serverService) StopForwarding(alias string) error {
+	s.fwMu.Lock()
+	procs := s.forwards[alias]
+	delete(s.forwards, alias)
+	s.fwMu.Unlock()
+
+	if len(procs) == 0 {
+		return nil
+	}
+
+	var errs []error
+	for _, p := range procs {
+		if p != nil {
+			if err := p.Signal(syscall.SIGTERM); err != nil {
+				// If SIGTERM fails, try SIGKILL
+				if killErr := p.Kill(); killErr != nil {
+					errs = append(errs, fmt.Errorf("failed to kill pid %d: %w", p.Pid, killErr))
+				}
+			}
+		}
+	}
+
+	if len(errs) > 0 {
+		return fmt.Errorf("errors stopping forwards: %v", errs)
+	}
+	return nil
+}
+
+// IsForwarding reports whether there is at least one active forward for alias.
+func (s *serverService) IsForwarding(alias string) bool {
+	s.fwMu.Lock()
+	defer s.fwMu.Unlock()
+	return len(s.forwards[alias]) > 0
 }
 
 // Ping checks if the server is reachable on its SSH port.
