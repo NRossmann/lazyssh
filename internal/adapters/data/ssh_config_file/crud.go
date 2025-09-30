@@ -98,7 +98,6 @@ func (r *Repository) createHostFromServer(server domain.Server) *ssh_config.Host
 			{Str: server.Alias},
 		},
 		Nodes:              make([]ssh_config.Node, 0),
-		LeadingSpace:       4,
 		EOLComment:         "Added by lazyssh",
 		SpaceBeforeComment: strings.Repeat(" ", 4),
 	}
@@ -200,7 +199,49 @@ func (r *Repository) addKVNodeIfNotEmpty(host *ssh_config.Host, key, value strin
 		Value:        value,
 		LeadingSpace: 4,
 	}
-	host.Nodes = append(host.Nodes, kvNode)
+	r.insertKVNodeAfterLastKV(host, kvNode)
+}
+
+// insertKVNodeAfterLastKV inserts a KV node immediately after the last existing KV node in the host.
+// This preserves any trailing non-KV nodes (blank lines, comments) that may exist after the host's
+// configuration block, preventing formatting shifts when adding new fields to a host entry.
+//
+// Example: If a host block has trailing blank lines separating it from the next host entry,
+// this function ensures new fields are inserted before those blank lines, maintaining the
+// visual separation between host blocks.
+func (r *Repository) insertKVNodeAfterLastKV(host *ssh_config.Host, kvNode *ssh_config.KV) {
+	// STEP 1: Find the last KV node (search backwards)
+	lastKVIndex := -1
+	for i := len(host.Nodes) - 1; i >= 0; i-- {
+		if _, ok := host.Nodes[i].(*ssh_config.KV); ok {
+			lastKVIndex = i
+			break
+		}
+	}
+
+	// STEP 2: Handle case where no KV nodes exist
+	if lastKVIndex == -1 {
+		if len(host.Nodes) == 0 {
+			// Case A: Empty host - just append
+			host.Nodes = append(host.Nodes, kvNode)
+		} else {
+			// Case B: Only comments/blanks exist - prepend before them
+			host.Nodes = append([]ssh_config.Node{kvNode}, host.Nodes...)
+		}
+		return
+	}
+
+	// STEP 3: We found KV nodes - insert after the last one
+	insertAt := lastKVIndex + 1
+
+	if insertAt == len(host.Nodes) {
+		// Case C: Last KV is at the end - just append
+		host.Nodes = append(host.Nodes, kvNode)
+		return
+	}
+
+	// Case D: Last KV has trailing nodes (blanks/comments) - insert between them
+	host.Nodes = append(host.Nodes[:insertAt], append([]ssh_config.Node{kvNode}, host.Nodes[insertAt:]...)...)
 }
 
 // removeNodesByKey removes all nodes with the specified key from the nodes slice
@@ -337,12 +378,10 @@ func (r *Repository) updateHostNodes(host *ssh_config.Host, newServer domain.Ser
 
 // updateOrAddKVNode updates an existing key-value node or adds a new one if it doesn't exist.
 func (r *Repository) updateOrAddKVNode(host *ssh_config.Host, key, newValue string) {
-	keyLower := strings.ToLower(key)
-
 	// Try to update existing node
 	for _, node := range host.Nodes {
 		kvNode, ok := node.(*ssh_config.KV)
-		if ok && strings.EqualFold(kvNode.Key, keyLower) {
+		if ok && strings.EqualFold(kvNode.Key, key) {
 			kvNode.Value = newValue
 			return
 		}
@@ -354,7 +393,7 @@ func (r *Repository) updateOrAddKVNode(host *ssh_config.Host, key, newValue stri
 		Value:        newValue,
 		LeadingSpace: 4,
 	}
-	host.Nodes = append(host.Nodes, kvNode)
+	r.insertKVNodeAfterLastKV(host, kvNode)
 }
 
 // removeKVNode removes a key-value node from the host if it exists.
