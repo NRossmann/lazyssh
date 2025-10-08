@@ -21,6 +21,7 @@ import (
 	"os"
 	"os/exec"
 	"regexp"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -221,9 +222,12 @@ func (s *serverService) StartForward(alias string, extraArgs []string) (int, err
 	cmd.Stdin = devNull
 	cmd.Stdout = devNull
 	cmd.Stderr = devNull
-	cmd.SysProcAttr = &syscall.SysProcAttr{
-		Setsid: true, // Create new session to fully detach
+	// Set SysProcAttr conditionally to avoid Windows-only build issues
+	sysProcAttr := &syscall.SysProcAttr{}
+	if runtime.GOOS != "windows" {
+		sysProcAttr.Setsid = true
 	}
+	cmd.SysProcAttr = sysProcAttr
 
 	if err := cmd.Start(); err != nil {
 		return 0, fmt.Errorf("failed to start ssh: %w", err)
