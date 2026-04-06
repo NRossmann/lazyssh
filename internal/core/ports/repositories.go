@@ -32,3 +32,15 @@ type AgentConfigRepository interface {
 	// SaveAgents persists the given SSH agent entries, replacing all existing ones.
 	SaveAgents(agents []domain.AgentConfig) error
 }
+
+// VCSRepository provides version control integration for dotfile managers
+// such as yadm. Implementations must be safe to call even when the underlying
+// tool is not installed — in that case every method is a silent no-op.
+type VCSRepository interface {
+	// IsAvailable reports whether the VCS tool is installed and manages
+	// at least one lazyssh-related file.
+	IsAvailable() bool
+	// Commit stages all tracked lazyssh-managed files and creates a commit
+	// with the given message. It silently returns nil when nothing changed.
+	Commit(message string) error
+}

@@ -642,7 +642,7 @@ func (t *tui) handleManageAgents() {
 		return
 	}
 
-	manager := NewAgentManager(t.app, t.logger, t.agentConfigRepo).
+	manager := NewAgentManager(t.app, t.logger, t.agentConfigRepo, t.vcsRepo).
 		OnClose(func() {
 			t.returnToMain()
 		})

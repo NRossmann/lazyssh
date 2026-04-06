@@ -35,6 +35,7 @@ type tui struct {
 	app             *tview.Application
 	serverService   ports.ServerService
 	agentConfigRepo ports.AgentConfigRepository
+	vcsRepo         ports.VCSRepository
 
 	header     *AppHeader
 	searchBar  *SearchBar
@@ -49,12 +50,13 @@ type tui struct {
 	sortMode SortMode
 }
 
-func NewTUI(logger *zap.SugaredLogger, ss ports.ServerService, acr ports.AgentConfigRepository, version, commit string) App {
+func NewTUI(logger *zap.SugaredLogger, ss ports.ServerService, acr ports.AgentConfigRepository, vcs ports.VCSRepository, version, commit string) App {
 	return &tui{
 		logger:          logger,
 		app:             tview.NewApplication(),
 		serverService:   ss,
 		agentConfigRepo: acr,
+		vcsRepo:         vcs,
 		version:         version,
 		commit:          commit,
 	}

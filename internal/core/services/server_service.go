@@ -35,6 +35,7 @@ import (
 
 type serverService struct {
 	serverRepository ports.ServerRepository
+	vcsRepository    ports.VCSRepository
 	logger           *zap.SugaredLogger
 
 	fwMu     sync.Mutex
@@ -42,10 +43,11 @@ type serverService struct {
 }
 
 // NewServerService creates a new instance of serverService.
-func NewServerService(logger *zap.SugaredLogger, sr ports.ServerRepository) ports.ServerService {
+func NewServerService(logger *zap.SugaredLogger, sr ports.ServerRepository, vcs ports.VCSRepository) ports.ServerService {
 	return &serverService{
 		logger:           logger,
 		serverRepository: sr,
+		vcsRepository:    vcs,
 	}
 }
 
@@ -118,8 +120,10 @@ func (s *serverService) UpdateServer(server domain.Server, newServer domain.Serv
 	err := s.serverRepository.UpdateServer(server, newServer)
 	if err != nil {
 		s.logger.Errorw("failed to update server", "error", err, "server", server)
+		return err
 	}
-	return err
+	s.vcsCommit(fmt.Sprintf("lazyssh: update server %s", newServer.Alias))
+	return nil
 }
 
 // AddServer adds a new server to the repository.
@@ -131,8 +135,10 @@ func (s *serverService) AddServer(server domain.Server) error {
 	err := s.serverRepository.AddServer(server)
 	if err != nil {
 		s.logger.Errorw("failed to add server", "error", err, "server", server)
+		return err
 	}
-	return err
+	s.vcsCommit(fmt.Sprintf("lazyssh: add server %s", server.Alias))
+	return nil
 }
 
 // DeleteServer removes a server from the repository.
@@ -140,8 +146,10 @@ func (s *serverService) DeleteServer(server domain.Server) error {
 	err := s.serverRepository.DeleteServer(server)
 	if err != nil {
 		s.logger.Errorw("failed to delete server", "error", err, "server", server)
+		return err
 	}
-	return err
+	s.vcsCommit(fmt.Sprintf("lazyssh: delete server %s", server.Alias))
+	return nil
 }
 
 // SetPinned sets or clears a pin timestamp for the server alias.
@@ -149,8 +157,10 @@ func (s *serverService) SetPinned(alias string, pinned bool) error {
 	err := s.serverRepository.SetPinned(alias, pinned)
 	if err != nil {
 		s.logger.Errorw("failed to set pin state", "error", err, "alias", alias, "pinned", pinned)
+		return err
 	}
-	return err
+	s.vcsCommit(fmt.Sprintf("lazyssh: update server %s", alias))
+	return nil
 }
 
 // SSH starts an interactive SSH session to the given alias using the system's ssh client.
@@ -376,4 +386,16 @@ func resolveSSHDestination(alias string) (string, int, bool) {
 		port = 22
 	}
 	return host, port, true
+}
+
+// vcsCommit attempts to commit lazyssh-managed files via the VCS repository.
+// Errors are logged but never propagated — a VCS failure must not block normal
+// operation.
+func (s *serverService) vcsCommit(message string) {
+	if s.vcsRepository == nil {
+		return
+	}
+	if err := s.vcsRepository.Commit(message); err != nil {
+		s.logger.Warnw("vcs commit failed", "message", message, "error", err)
+	}
 }

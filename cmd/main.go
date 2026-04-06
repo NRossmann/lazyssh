@@ -21,6 +21,7 @@ import (
 
 	"github.com/Adembc/lazyssh/internal/adapters/data/agent_config"
 	"github.com/Adembc/lazyssh/internal/adapters/data/ssh_config_file"
+	"github.com/Adembc/lazyssh/internal/adapters/data/yadm"
 	"github.com/Adembc/lazyssh/internal/logger"
 
 	"github.com/Adembc/lazyssh/internal/adapters/ui"
@@ -55,8 +56,14 @@ func main() {
 
 	serverRepo := ssh_config_file.NewRepository(log, sshConfigFile, metaDataFile)
 	agentConfigRepo := agent_config.NewRepository(log, agentsFile)
-	serverService := services.NewServerService(log, serverRepo)
-	tui := ui.NewTUI(log, serverService, agentConfigRepo, version, gitCommit)
+
+	vcsRepo := yadm.NewRepository(log, []string{sshConfigFile, metaDataFile, agentsFile})
+	if !vcsRepo.IsAvailable() {
+		log.Infow("yadm not available, VCS integration disabled")
+	}
+
+	serverService := services.NewServerService(log, serverRepo, vcsRepo)
+	tui := ui.NewTUI(log, serverService, agentConfigRepo, vcsRepo, version, gitCommit)
 
 	rootCmd := &cobra.Command{
 		Use:   ui.AppName,

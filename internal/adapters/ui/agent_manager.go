@@ -32,9 +32,10 @@ import (
 type AgentManager struct {
 	*tview.Flex
 
-	app    *tview.Application
-	logger *zap.SugaredLogger
-	repo   ports.AgentConfigRepository
+	app     *tview.Application
+	logger  *zap.SugaredLogger
+	repo    ports.AgentConfigRepository
+	vcsRepo ports.VCSRepository
 
 	list      *AgentList
 	statusBar *tview.TextView
@@ -45,13 +46,19 @@ type AgentManager struct {
 }
 
 // NewAgentManager creates a new agent management screen.
-func NewAgentManager(app *tview.Application, logger *zap.SugaredLogger, repo ports.AgentConfigRepository) *AgentManager {
+func NewAgentManager(
+	app *tview.Application,
+	logger *zap.SugaredLogger,
+	repo ports.AgentConfigRepository,
+	vcsRepo ports.VCSRepository,
+) *AgentManager {
 	am := &AgentManager{
-		Flex:   tview.NewFlex().SetDirection(tview.FlexRow),
-		app:    app,
-		logger: logger,
-		repo:   repo,
-		list:   NewAgentList(),
+		Flex:    tview.NewFlex().SetDirection(tview.FlexRow),
+		app:     app,
+		logger:  logger,
+		repo:    repo,
+		vcsRepo: vcsRepo,
+		list:    NewAgentList(),
 	}
 	am.build()
 	return am
@@ -169,6 +176,17 @@ func (am *AgentManager) save() error {
 	return nil
 }
 
+// vcsCommit attempts to commit lazyssh-managed files via the VCS repository.
+// Errors are logged but never propagated.
+func (am *AgentManager) vcsCommit(message string) {
+	if am.vcsRepo == nil {
+		return
+	}
+	if err := am.vcsRepo.Commit(message); err != nil {
+		am.logger.Warnw("vcs commit failed", "message", message, "error", err)
+	}
+}
+
 func (am *AgentManager) close() {
 	if am.onClose != nil {
 		am.onClose()
@@ -211,6 +229,7 @@ func (am *AgentManager) showAddForm() {
 			am.showError(fmt.Sprintf("Save failed: %v", err))
 			return
 		}
+		am.vcsCommit(fmt.Sprintf("lazyssh: add agent %s", name))
 
 		am.refreshList()
 		am.app.SetRoot(am, true)
@@ -262,6 +281,7 @@ func (am *AgentManager) showEditForm() {
 			am.showError(fmt.Sprintf("Save failed: %v", err))
 			return
 		}
+		am.vcsCommit(fmt.Sprintf("lazyssh: update agent %s", name))
 
 		am.refreshList()
 		am.app.SetRoot(am, true)
@@ -301,6 +321,7 @@ func (am *AgentManager) showDeleteConfirm() {
 					am.showError(fmt.Sprintf("Delete failed: %v", err))
 					return
 				}
+				am.vcsCommit(fmt.Sprintf("lazyssh: delete agent %s", agent.Name))
 				am.refreshList()
 				am.showStatusTemp("Agent deleted: " + agent.Name)
 			}
@@ -320,6 +341,7 @@ func (am *AgentManager) showDeleteConfirm() {
 				am.showError(fmt.Sprintf("Delete failed: %v", err))
 				return nil
 			}
+			am.vcsCommit(fmt.Sprintf("lazyssh: delete agent %s", agent.Name))
 			am.refreshList()
 			am.app.SetRoot(am, true)
 			am.app.SetFocus(am.list)
