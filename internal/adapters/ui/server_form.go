@@ -57,14 +57,15 @@ type ServerForm struct {
 	original      *domain.Server
 	onSave        func(domain.Server, *domain.Server)
 	onCancel      func()
-	app           *tview.Application // Reference to app for showing modals
-	version       string             // Version for header
-	commit        string             // Commit for header
-	validation    *ValidationState   // Validation state for all fields
-	helpPanel     *tview.TextView    // Help panel for field descriptions
-	helpMode      HelpDisplayMode    // Current help display mode
-	currentField  string             // Currently focused field
-	mainContainer *tview.Flex        // Container for form and help panel
+	app           *tview.Application   // Reference to app for showing modals
+	version       string               // Version for header
+	commit        string               // Commit for header
+	validation    *ValidationState     // Validation state for all fields
+	helpPanel     *tview.TextView      // Help panel for field descriptions
+	helpMode      HelpDisplayMode      // Current help display mode
+	currentField  string               // Currently focused field
+	mainContainer *tview.Flex          // Container for form and help panel
+	agentConfigs  []domain.AgentConfig // Pre-defined SSH agent configurations for autocomplete
 }
 
 func NewServerForm(mode ServerFormMode, original *domain.Server) *ServerForm {
@@ -904,6 +905,66 @@ func (sf *ServerForm) createAlgorithmAutocomplete(suggestions []string) func(str
 	}
 }
 
+// createAgentAutocomplete creates an autocomplete function for the IdentityAgent
+// field. It suggests paths from the pre-defined agent configurations loaded from
+// ~/.lazyssh/agents.json, formatted as "path (name)" for easy identification.
+// Users can still type custom paths; the autocomplete filters as they type.
+func (sf *ServerForm) createAgentAutocomplete() func(string) []string {
+	return func(currentText string) []string {
+		if len(sf.agentConfigs) == 0 {
+			return nil
+		}
+
+		// Build suggestion list: show the path, with the name as a label
+		var suggestions []string
+		searchTerm := strings.ToLower(strings.TrimSpace(currentText))
+
+		for _, agent := range sf.agentConfigs {
+			entry := agent.Path
+			if agent.Name != "" {
+				entry = fmt.Sprintf("%s (%s)", agent.Path, agent.Name)
+			}
+
+			if currentText == "" {
+				// Show all agents when field is empty
+				suggestions = append(suggestions, entry)
+				continue
+			}
+
+			// Case-insensitive match against both name and path
+			lowerEntry := strings.ToLower(entry)
+			lowerName := strings.ToLower(agent.Name)
+			lowerPath := strings.ToLower(agent.Path)
+
+			if strings.Contains(lowerPath, searchTerm) ||
+				strings.Contains(lowerName, searchTerm) ||
+				matchesSequence(lowerEntry, searchTerm) {
+				suggestions = append(suggestions, entry)
+			}
+		}
+
+		if len(suggestions) == 0 {
+			return nil
+		}
+
+		return suggestions
+	}
+}
+
+// cleanAgentAutocompleteValue strips the display label "(name)" from an
+// autocomplete selection, returning only the raw socket path so that the
+// stored IdentityAgent value stays a valid SSH config value.
+func cleanAgentAutocompleteValue(text string) string {
+	if idx := strings.LastIndex(text, " ("); idx != -1 {
+		candidate := text[:idx]
+		// Make sure there's a closing paren at the end
+		if strings.HasSuffix(text, ")") {
+			return strings.TrimSpace(candidate)
+		}
+	}
+	return text
+}
+
 // validateField validates a single field and updates the validation state
 func (sf *ServerForm) validateField(fieldName, value string) string {
 	fieldValidators := GetFieldValidators()
@@ -1499,7 +1560,17 @@ func (sf *ServerForm) createAuthenticationForm() {
 	addKeysIndex := sf.findOptionIndex(addKeysOptions, defaultValues.AddKeysToAgent)
 	sf.addDropDownWithHelp(form, "AddKeysToAgent:", "AddKeysToAgent", addKeysOptions, addKeysIndex)
 
-	sf.addInputFieldWithHelp(form, "IdentityAgent:", "IdentityAgent", defaultValues.IdentityAgent, 40, GetFieldPlaceholder("IdentityAgent"))
+	identityAgentField := sf.addInputFieldWithHelp(form, "IdentityAgent:", "IdentityAgent", defaultValues.IdentityAgent, 40, GetFieldPlaceholder("IdentityAgent"))
+	identityAgentField.SetAutocompleteFunc(sf.createAgentAutocomplete())
+	identityAgentField.SetAutocompletedFunc(func(text string, index, source int) bool {
+		// Strip the display label, keep only the path
+		cleaned := cleanAgentAutocompleteValue(text)
+		if cleaned != text {
+			identityAgentField.SetText(cleaned)
+			return true
+		}
+		return false
+	})
 
 	// Password/Interactive authentication
 	form.AddTextView("\n[yellow]▶ Password & Interactive[-]", "", 0, 1, true, false)
@@ -2283,5 +2354,12 @@ func (sf *ServerForm) SetVersionInfo(version, commit string) *ServerForm {
 		// Rebuild header if already exists
 		sf.header = NewAppHeader(sf.version, sf.commit, RepoURL)
 	}
+	return sf
+}
+
+// SetAgentConfigs sets the pre-defined SSH agent configurations used for
+// autocomplete in the IdentityAgent form field.
+func (sf *ServerForm) SetAgentConfigs(agents []domain.AgentConfig) *ServerForm {
+	sf.agentConfigs = agents
 	return sf
 }

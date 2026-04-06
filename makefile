@@ -158,6 +158,10 @@ build-all: quality $(OUTPUT_DIR) ## Build binaries for all platforms
 install: build ## Install binary to GOBIN
 	cp $(OUTPUT_DIR)/$(BINARY_NAME) $(GOBIN)/
 
+.PHONY: deploy
+deploy: build ## Build and install binary to /usr/local/bin
+	sudo install -m 755 $(OUTPUT_DIR)/$(BINARY_NAME) /usr/local/bin/$(BINARY_NAME)
+
 $(OUTPUT_DIR):
 	mkdir -p $(OUTPUT_DIR)
 

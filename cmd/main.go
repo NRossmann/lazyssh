@@ -19,6 +19,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/Adembc/lazyssh/internal/adapters/data/agent_config"
 	"github.com/Adembc/lazyssh/internal/adapters/data/ssh_config_file"
 	"github.com/Adembc/lazyssh/internal/logger"
 
@@ -50,10 +51,12 @@ func main() {
 	}
 	sshConfigFile := filepath.Join(home, ".ssh", "config")
 	metaDataFile := filepath.Join(home, ".lazyssh", "metadata.json")
+	agentsFile := filepath.Join(home, ".lazyssh", "agents.json")
 
 	serverRepo := ssh_config_file.NewRepository(log, sshConfigFile, metaDataFile)
+	agentConfigRepo := agent_config.NewRepository(log, agentsFile)
 	serverService := services.NewServerService(log, serverRepo)
-	tui := ui.NewTUI(log, serverService, version, gitCommit)
+	tui := ui.NewTUI(log, serverService, agentConfigRepo, version, gitCommit)
 
 	rootCmd := &cobra.Command{
 		Use:   ui.AppName,

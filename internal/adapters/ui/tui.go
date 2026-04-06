@@ -32,8 +32,9 @@ type tui struct {
 	version string
 	commit  string
 
-	app           *tview.Application
-	serverService ports.ServerService
+	app             *tview.Application
+	serverService   ports.ServerService
+	agentConfigRepo ports.AgentConfigRepository
 
 	header     *AppHeader
 	searchBar  *SearchBar
@@ -48,13 +49,14 @@ type tui struct {
 	sortMode SortMode
 }
 
-func NewTUI(logger *zap.SugaredLogger, ss ports.ServerService, version, commit string) App {
+func NewTUI(logger *zap.SugaredLogger, ss ports.ServerService, acr ports.AgentConfigRepository, version, commit string) App {
 	return &tui{
-		logger:        logger,
-		app:           tview.NewApplication(),
-		serverService: ss,
-		version:       version,
-		commit:        commit,
+		logger:          logger,
+		app:             tview.NewApplication(),
+		serverService:   ss,
+		agentConfigRepo: acr,
+		version:         version,
+		commit:          commit,
 	}
 }
 

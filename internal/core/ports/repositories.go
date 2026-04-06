@@ -24,3 +24,11 @@ type ServerRepository interface {
 	SetPinned(alias string, pinned bool) error
 	RecordSSH(alias string) error
 }
+
+// AgentConfigRepository provides access to pre-defined SSH agent configurations.
+type AgentConfigRepository interface {
+	// ListAgents returns all configured SSH agent entries.
+	ListAgents() ([]domain.AgentConfig, error)
+	// SaveAgents persists the given SSH agent entries, replacing all existing ones.
+	SaveAgents(agents []domain.AgentConfig) error
+}

@@ -92,6 +92,9 @@ func (t *tui) handleGlobalKeys(event *tcell.EventKey) *tcell.EventKey {
 	case 'k':
 		t.handleNavigateUp()
 		return nil
+	case 'A':
+		t.handleManageAgents()
+		return nil
 	}
 
 	if event.Key() == tcell.KeyEnter {
@@ -237,6 +240,7 @@ func (t *tui) handleServerSelectionChange(server domain.Server) {
 func (t *tui) handleServerAdd() {
 	form := NewServerForm(ServerFormAdd, nil).
 		SetApp(t.app).
+		SetAgentConfigs(t.loadAgentConfigs()).
 		SetVersionInfo(t.version, t.commit).
 		OnSave(t.handleServerSave).
 		OnCancel(t.handleFormCancel)
@@ -247,6 +251,7 @@ func (t *tui) handleServerEdit() {
 	if server, ok := t.serverList.GetSelectedServer(); ok {
 		form := NewServerForm(ServerFormEdit, &server).
 			SetApp(t.app).
+			SetAgentConfigs(t.loadAgentConfigs()).
 			SetVersionInfo(t.version, t.commit).
 			OnSave(t.handleServerSave).
 			OnCancel(t.handleFormCancel)
@@ -628,4 +633,34 @@ func (t *tui) handleStopForwarding() {
 			})
 		}()
 	}
+}
+
+// handleManageAgents opens the full-screen SSH agent management screen.
+func (t *tui) handleManageAgents() {
+	if t.agentConfigRepo == nil {
+		t.showStatusTempColor("Agent management not available", "#FF6B6B")
+		return
+	}
+
+	manager := NewAgentManager(t.app, t.logger, t.agentConfigRepo).
+		OnClose(func() {
+			t.returnToMain()
+		})
+	manager.Load()
+	t.app.SetRoot(manager, true)
+	t.app.SetFocus(manager.list)
+}
+
+// loadAgentConfigs reads the pre-defined SSH agent configurations.
+// Returns an empty slice on error so the form still works without agents.
+func (t *tui) loadAgentConfigs() []domain.AgentConfig {
+	if t.agentConfigRepo == nil {
+		return nil
+	}
+	agents, err := t.agentConfigRepo.ListAgents()
+	if err != nil {
+		t.logger.Warnw("failed to load agent configs", "error", err)
+		return nil
+	}
+	return agents
 }
