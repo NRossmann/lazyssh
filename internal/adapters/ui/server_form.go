@@ -66,6 +66,7 @@ type ServerForm struct {
 	currentField  string               // Currently focused field
 	mainContainer *tview.Flex          // Container for form and help panel
 	agentConfigs  []domain.AgentConfig // Pre-defined SSH agent configurations for autocomplete
+	existingTags  []string             // Unique tags already used across all servers for autocomplete
 }
 
 func NewServerForm(mode ServerFormMode, original *domain.Server) *ServerForm {
@@ -1312,8 +1313,9 @@ func (sf *ServerForm) createBasicForm() {
 	keysField := sf.addValidatedInputField(form, "Keys:", "Keys", defaultValues.Key, 40, GetFieldPlaceholder("Keys"))
 	keysField.SetAutocompleteFunc(sf.createSSHKeyAutocomplete())
 
-	// Tags field
-	sf.addValidatedInputField(form, "Tags:", "Tags", defaultValues.Tags, 30, GetFieldPlaceholder("Tags"))
+	// Tags field with autocomplete
+	tagsField := sf.addValidatedInputField(form, "Tags:", "Tags", defaultValues.Tags, 30, GetFieldPlaceholder("Tags"))
+	tagsField.SetAutocompleteFunc(sf.createTagAutocomplete())
 
 	// Add save and cancel buttons
 	form.AddButton("Save", sf.handleSaveButton)
@@ -2362,4 +2364,67 @@ func (sf *ServerForm) SetVersionInfo(version, commit string) *ServerForm {
 func (sf *ServerForm) SetAgentConfigs(agents []domain.AgentConfig) *ServerForm {
 	sf.agentConfigs = agents
 	return sf
+}
+
+// SetExistingTags sets the list of unique tags already used across all servers.
+// These are offered as fuzzy-finding autocomplete suggestions for tag input fields.
+func (sf *ServerForm) SetExistingTags(tags []string) *ServerForm {
+	sf.existingTags = tags
+	return sf
+}
+
+// createTagAutocomplete creates an autocomplete function for the Tags input
+// field. Tags are comma-separated, so the autocomplete applies only to the
+// token currently being typed (the portion after the last comma). When a
+// suggestion is selected the completed tag replaces only that trailing token.
+func (sf *ServerForm) createTagAutocomplete() func(string) []string {
+	return func(currentText string) []string {
+		if len(sf.existingTags) == 0 {
+			return nil
+		}
+
+		// Split by comma to find the current tag being typed
+		parts := strings.Split(currentText, ",")
+		lastPart := strings.TrimSpace(parts[len(parts)-1])
+
+		// Build the prefix from all already-entered tags
+		prefix := ""
+		if len(parts) > 1 {
+			existing := parts[:len(parts)-1]
+			for i := range existing {
+				existing[i] = strings.TrimSpace(existing[i])
+			}
+			prefix = strings.Join(existing, ", ") + ", "
+		}
+
+		// Collect tags already entered so we don't suggest duplicates
+		enteredSet := make(map[string]bool)
+		for _, p := range parts[:len(parts)-1] {
+			enteredSet[strings.TrimSpace(p)] = true
+		}
+
+		searchTerm := strings.ToLower(lastPart)
+
+		var suggestions []string
+		for _, tag := range sf.existingTags {
+			// Skip tags the user has already entered
+			if enteredSet[tag] {
+				continue
+			}
+
+			lowerTag := strings.ToLower(tag)
+			if lastPart == "" {
+				// Show all remaining tags when the cursor is right after a comma
+				suggestions = append(suggestions, prefix+tag)
+			} else if strings.Contains(lowerTag, searchTerm) || matchesSequence(lowerTag, searchTerm) {
+				suggestions = append(suggestions, prefix+tag)
+			}
+		}
+
+		if len(suggestions) == 0 {
+			return nil
+		}
+
+		return suggestions
+	}
 }

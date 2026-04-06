@@ -241,6 +241,7 @@ func (t *tui) handleServerAdd() {
 	form := NewServerForm(ServerFormAdd, nil).
 		SetApp(t.app).
 		SetAgentConfigs(t.loadAgentConfigs()).
+		SetExistingTags(t.collectExistingTags()).
 		SetVersionInfo(t.version, t.commit).
 		OnSave(t.handleServerSave).
 		OnCancel(t.handleFormCancel)
@@ -252,6 +253,7 @@ func (t *tui) handleServerEdit() {
 		form := NewServerForm(ServerFormEdit, &server).
 			SetApp(t.app).
 			SetAgentConfigs(t.loadAgentConfigs()).
+			SetExistingTags(t.collectExistingTags()).
 			SetVersionInfo(t.version, t.commit).
 			OnSave(t.handleServerSave).
 			OnCancel(t.handleFormCancel)
@@ -400,6 +402,52 @@ func (t *tui) showEditTagsForm(server domain.Server) {
 
 	defaultTags := strings.Join(server.Tags, ", ")
 	form.AddInputField("Tags (comma):", defaultTags, 40, nil, nil)
+
+	// Set up tag autocomplete on the input field
+	tagsInput := form.GetFormItem(0).(*tview.InputField)
+	existingTags := t.collectExistingTags()
+	tagsInput.SetAutocompleteFunc(func(currentText string) []string {
+		if len(existingTags) == 0 {
+			return nil
+		}
+
+		parts := strings.Split(currentText, ",")
+		lastPart := strings.TrimSpace(parts[len(parts)-1])
+
+		prefix := ""
+		if len(parts) > 1 {
+			existing := parts[:len(parts)-1]
+			for i := range existing {
+				existing[i] = strings.TrimSpace(existing[i])
+			}
+			prefix = strings.Join(existing, ", ") + ", "
+		}
+
+		enteredSet := make(map[string]bool)
+		for _, p := range parts[:len(parts)-1] {
+			enteredSet[strings.TrimSpace(p)] = true
+		}
+
+		searchTerm := strings.ToLower(lastPart)
+
+		var suggestions []string
+		for _, tag := range existingTags {
+			if enteredSet[tag] {
+				continue
+			}
+			lowerTag := strings.ToLower(tag)
+			if lastPart == "" {
+				suggestions = append(suggestions, prefix+tag)
+			} else if strings.Contains(lowerTag, searchTerm) || matchesSequence(lowerTag, searchTerm) {
+				suggestions = append(suggestions, prefix+tag)
+			}
+		}
+
+		if len(suggestions) == 0 {
+			return nil
+		}
+		return suggestions
+	})
 
 	form.AddButton("Save", func() {
 		text := strings.TrimSpace(form.GetFormItem(0).(*tview.InputField).GetText())
@@ -663,4 +711,24 @@ func (t *tui) loadAgentConfigs() []domain.AgentConfig {
 		return nil
 	}
 	return agents
+}
+
+// collectExistingTags gathers all unique tags used across every server and
+// returns them sorted for deterministic autocomplete ordering.
+func (t *tui) collectExistingTags() []string {
+	servers, err := t.serverService.ListServers("")
+	if err != nil {
+		return nil
+	}
+	seen := make(map[string]struct{})
+	var tags []string
+	for _, s := range servers {
+		for _, tag := range s.Tags {
+			if _, ok := seen[tag]; !ok {
+				seen[tag] = struct{}{}
+				tags = append(tags, tag)
+			}
+		}
+	}
+	return tags
 }
